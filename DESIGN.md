@@ -1,6 +1,6 @@
 # Trace viewer performance and scalability
 
-> Historical benchmark note: the measurements below were captured during the initial scalability pass, before later outlier, tooltip, and keyboard-navigation additions. Re-run benchmarks for final performance claims. The current UI uses 3× peer-median outlier detection, not depth maxima. Keyboard navigation now uses ARIA tree semantics; navigation object props can limit card memoization.
+> Historical benchmark note: the measurements below were captured during the initial scalability pass, before later outlier, tooltip, and keyboard-navigation additions. Re-run benchmarks for final performance claims. The current UI uses selectable 2×/3×/4× peer-median outlier detection (default 3×), not depth maxima. Keyboard navigation now uses ARIA tree semantics; card navigation metadata and original outlier arrays now retain stable references between viewport renders.
 
 ## What the inspection found
 
@@ -13,11 +13,11 @@
 
 ## Performance architecture (concise section for the submission)
 
-Normalize each trace response once into ID lookups, ordered child IDs, roots, depth, normalized names, and per-depth analysis sets. Cycle detection and depth assignment are iterative; sorting preserves start-time order. Normal navigation skips filtered-set construction entirely. Search is debounced by 200 ms, combines name/type/status/focus filters, and retains matching runs' ancestor paths. Cancelling the previous timer prevents stale search work.
+Normalize each trace response once into ID lookups, ordered child IDs, roots, depth, normalized names, and same-type sibling outliers. Cycle detection and depth assignment are iterative; sorting preserves start-time order. Normal navigation skips filtered-set construction entirely. Search is debounced by 200 ms, combines name/type/status/focus filters, and retains matching runs' ancestor paths. Cancelling the previous timer prevents stale search work.
 
 Compute a flat coordinate layout from only the expanded hierarchy, while keeping the existing top-down diagram. Collapsed descendants are never visited by layout. The canvas uses sorted depth bands and binary search to mount only cards and connector segments intersecting the viewport plus 240 logical pixels of overscan. Scroll updates are coalesced with animation frames. Native buttons remain accessible; a focused card stays mounted outside overscan. Memoized cards receive stable run objects, callbacks, and primitive presentation flags, so unrelated cards can skip selection renders. Scrolling updates the canvas without rerendering filters or rebuilding the model.
 
-All four analysis annotations are computed during normalization; switching modes selects a cached set. Search and analysis focus reuse that index, and full-trace comparisons remain independent of filters. Large payloads use bounded, explicitly labeled previews before React recursion or JSON formatting, with progressive disclosure. Existing abortable detail requests prevent stale data from replacing the current selection.
+All three outlier metrics are computed during normalization; changing the metric builds a memoized ID set from cached outliers. Search and analysis focus reuse that index, and full-trace comparisons remain independent of filters. Large payloads use bounded, explicitly labeled previews before React recursion or JSON formatting, with progressive disclosure. Existing abortable detail requests prevent stale data from replacing the current selection.
 
 ## Reproduce the measurements
 
@@ -36,7 +36,7 @@ The harness shows React render durations, DOM counts, and observed browser long 
 
 Baseline: expanding 1,000 runs mounted 1,000 cards / 16,597 elements, took approximately 87 ms of React rendering, and produced a 155 ms long task. Expanding 10,000 runs caused browser inspection to time out; no reliable completion measurement was recovered. A full 50k baseline expansion was deliberately not attempted after that failure. Baseline data preparation alone was much cheaper than its DOM rendering (a separate single-pass Node sample: 43 ms for tree construction plus 26 ms for all four analyses at 50k).
 
-Final browser smoke profile, Chromium in-app browser, 1280 × 800, Vite development build with React Strict Mode, no CPU throttling. Values below are the largest React render duration observed for each operation, not end-to-end latency or production guarantees. Timings vary with JIT/GC; these are a recorded run, not statistical percentiles. Search additionally has its intentional 200 ms delay. Initial loading includes development fixture preparation and Strict Mode work.
+Historical browser smoke profile (before later UI features), Chromium in-app browser, 1280 × 800, Vite development build with React Strict Mode, no CPU throttling. Values below are the largest React render duration observed for each operation, not end-to-end latency or production guarantees. Timings vary with JIT/GC; these are a recorded run, not statistical percentiles. Search additionally has its intentional 200 ms delay. Initial loading includes development fixture preparation and Strict Mode work.
 
 | Operation | 1,000 runs | 10,000 runs | 50,000 runs |
 | --- | ---: | ---: | ---: |
@@ -52,7 +52,7 @@ Final browser smoke profile, Chromium in-app browser, 1280 × 800, Vite developm
 
 No long tasks were observed in those interaction windows after loading. The 50k initial load still produced a 113 ms long task. Collapsing returned all three fixtures to one mounted root card. Enabling details and analysis kept the 50k fixture below 420 elements in these samples. JSON selection initially exposed about 12.7k characters, increasing to about 25k after one explicit Show more action, instead of formatting the 50,000-document object at once.
 
-Final warmed Node medians (ms):
+Historical warmed Node medians (ms):
 
 | Operation | 1k | 10k | 50k |
 | --- | ---: | ---: | ---: |
@@ -63,12 +63,12 @@ Final warmed Node medians (ms):
 
 ## Deliberate trade-offs and remaining limits
 
-- No Web Worker: the measured interactive bottleneck was DOM rendering. Virtualization fixed it; mode switches and searches are inexpensive. A worker could help the remaining approximately 51 ms one-time normalization cost, but introduces transfer, synchronization, and cancellation complexity. Reconsider if 50k initial-load responsiveness or frequent streamed reindexing becomes a product requirement. This is not a claim that initial loading is nonblocking.
+- No Web Worker: the measured interactive bottleneck was DOM rendering. Virtualization fixed it; mode switches and searches are inexpensive. A worker could help the remaining one-time normalization cost (about 152 ms in the latest 50k Node sample), but introduces transfer, synchronization, and cancellation complexity. Reconsider if 50k initial-load responsiveness or frequent streamed reindexing becomes a product requirement. This is not a claim that initial loading is nonblocking.
 - No heavy graph/virtualization dependency, deep prop comparisons, global state library, payload syntax highlighter, or speculative request cache.
 - No incremental layout engine: expand/collapse recomputes coordinates in O(V), where V is the logically expanded/filtered tree, not the total source when branches are collapsed. Expanding all 50k is still O(N) CPU and layout storage even though DOM remains bounded. Immutable expansion sets can also require O(N) copying.
-- Normalization is O(N) plus sibling sorting; search is O(N), debounced rather than asynchronous. Ancestor closure stops at already-retained nodes. Analysis mode selection is a lookup, except when changing the active focus filter requires a new filter/layout.
+- Normalization is O(N) plus sibling and peer-metric sorting; search is O(N), debounced rather than asynchronous. Ancestor closure stops at already-retained nodes. Outlier metric selection scans cached results to build an ID set; an active outlier-only filter also requires filtering/layout.
 - The API still delivers the entire trace and entire selected payload. JSON parsing, transfer size, and retained decoded objects are not virtualized. Previewing bounds subsequent formatting/rendering, not network or parsing costs. Repeated explicit Show more actions can eventually become expensive.
-- Layout uses fixed-height cards (full names via accessible text, hover title, and details). Very wide top-down trees remain visually spread out; search/focus/collapse help navigation but do not solve that information-design limit. Larger traces can also hit browser scroll-coordinate limits. Keyboard Tab visits mounted cards; scroll/search reveals other branches, and there is no full ARIA-tree arrow-key model.
+- Layout uses fixed-height cards (full names via accessible text, hover title, and details). Very wide top-down trees remain visually spread out; search/focus/collapse help navigation but do not solve that information-design limit. Larger traces can also hit browser scroll-coordinate limits. Keyboard navigation uses a roving Tab stop, arrows, Home/End, and Enter/Space. Focus targets are mounted before focus moves. I cycles badge explanations; Escape dismisses them. A full screen-reader audit remains outstanding.
 - The performance harness is a deterministic smoke profile, not an automated cross-browser benchmark. It does not model network latency, mobile CPU throttling, a production trace distribution, or heap/GC stress over a long session.
 - Production lazy fetching needs child-count/loading metadata and a paginated child endpoint. Streaming updates would require updating affected index entries, revalidating depth/metrics, and invalidating affected layout. Very large server-side searches should return matched IDs plus ancestor paths. None of those endpoint changes are part of this assignment.
 
@@ -83,3 +83,18 @@ Final warmed Node medians (ms):
 ## Alternate nested list view
 
 The Tree/List switch shares the same index, filters, analysis, selection, and expansion state. List mode lays out expanded nodes in depth-first preorder with indentation, then renders only fixed-height rows within the viewport plus overscan. Switching layouts resets the viewport without resetting the shared state. The diagram measurements above predate this alternate layout; the test suite separately verifies list ordering, collapse behavior, and bounded viewport candidates at 50k.
+
+## Cleanup verification (2026-10-04)
+
+Removed unused maximum-per-group highlight calculations and token-bar metadata. Both views now use explicit expansion. Subtree bulk controls preserve expansion outside the scope; JSON display preference lives in App. The synthetic fixture now has same-type siblings and deliberate 8× spikes, verified by tests for every metric. Tooltip data has structured headings/comparisons instead of parsing strings.
+
+Latest Node medians after the cleanup, using the revised fixtures:
+
+| Operation | 1k | 10k | 50k |
+| --- | ---: | ---: | ---: |
+| Normalize and detect outliers, ms | 2.92 | 25.95 | 151.70 |
+| Expanded layout, ms | 0.31 | 1.07 | 10.27 |
+| Search, ms | 0.03 | 0.22 | 0.73 |
+| Viewport candidate count | 11 | 11 | 10 |
+
+These are CPU measurements, not new browser render timings. The revised fixtures exercise outlier formatting work that the earlier fixtures did not. Number formatting shares an Intl.NumberFormat instance. CSS overrides were consolidated and obsolete rules removed; JSX was expanded for readability. Full JSON copy still serializes the original payload synchronously and can be expensive for very large payloads.

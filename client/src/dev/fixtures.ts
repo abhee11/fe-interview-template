@@ -7,15 +7,18 @@ export function generateTrace(count: number): RunNode[] {
   for (let i = 0; i < count; i++) {
     const parent = i ? Math.floor((i - 1) / 4) : null;
     const ancestors = parent === null ? [] : [...runs[parent].parent_run_ids, runs[parent].id];
-    const runType = ['chain', 'llm', 'tool', 'retriever'][i % 4];
+    const runType = ['chain', 'llm', 'tool', 'retriever'][(parent ?? 0) % 4];
+    // Vary sibling spikes so every threshold visibly changes the results.
+    const spike = i % 4 === 0 ? [2.5, 3.5, 8][(parent ?? 0) % 3] : 1;
+    const base = 100 + ((parent ?? 0) * 74) % 1000;
     runs.push({
       id: `synthetic-${i}`, name: `${runType} run ${i}`, run_type: runType,
       start_time: new Date(start + i * 7).toISOString(),
-      end_time: i % 101 === 100 ? null : new Date(start + i * 7 + 10 + (i * 73) % 5000).toISOString(),
+      end_time: i % 101 === 100 ? null : new Date(start + i * 7 + base * spike).toISOString(),
       parent_run_id: parent === null ? null : `synthetic-${parent}`,
       parent_run_ids: ancestors, trace_id: 'synthetic-0',
-      total_tokens: i % 4 === 1 ? (i * 997) % 20000 : 0,
-      total_cost: i % 4 === 1 ? ((i * 97) % 1000) / 100000 : null,
+      total_tokens: base * spike,
+      total_cost: base * spike / 100000,
       error: i % 97 === 96 ? 'Synthetic tool failure' : null,
       status: i % 97 === 96 ? 'error' : i % 101 === 100 ? 'running' : 'success',
     });
