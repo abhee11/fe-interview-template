@@ -111,17 +111,45 @@ TraceViewer/
 1. **Install dependencies**:
     
     ```bash
-    cd server && pnpm install
-    cd ../client && pnpm install
+    cd server && npm ci
+    cd ../client && npm ci
     ```
     
 2. **Start development servers**:
     
     ```bash
     # Terminal 1 - Backend
-    cd server && pnpm run dev  # Port 3001
+    cd server && npm run dev  # Port 3001
     # Terminal 2 - Frontend
-    cd client && pnpm run dev  # Port 3000
+    cd client && npm run dev  # Port 3000
     ```
     
 3. **View the app**: Open http://localhost:3000
+
+## Implementation notes
+
+The viewer builds a parent/child forest from the unordered API response and sorts siblings by start time, with ID as a stable tie-breaker. Missing parents and cyclic ancestry are retained as roots so no run disappears. Search, type, and status filters combine; ancestor paths stay visible and expand while filtering. Clearing filters restores the previous expansion state.
+
+The details panel formats both plain and serialized LangChain messages, including tool-call arguments, and offers a bounded JSON preview with progressive expansion. Copy JSON copies the full payload. Requests are aborted when selection changes. A 404 means the fixture has no payload, while other request failures offer a retry. Only three provided runs include payloads. Root metrics are displayed directly, without summing inclusive parent/child token or cost values. Durations use the fixture timestamps; these are not guaranteed to enclose all descendants.
+
+### Validation
+
+After installing dependencies in both folders:
+
+```bash
+npm run test --prefix client
+npm run lint --prefix client
+npm run build --prefix client
+npm run build --prefix server
+```
+
+The small test suite uses the backend's existing `tsx` dependency (Node 20+) and covers unordered input, deterministic ordering, orphan/cyclic data, full fixture coverage, and metric/status edge cases. The UI uses labeled filters, visible focus styles, and ARIA tree items with hierarchy, selection, and expansion metadata. Off-screen cards are virtualized; keyboard focus is retained while scrolling. It stacks the tree and details on narrow screens. Arrow keys navigate and expand/collapse runs, Home/End move to the first/last expanded run, and Enter/Space selects and expands. A full screen-reader audit remains outstanding.
+
+
+### Performance checks
+
+See [DESIGN.md](./DESIGN.md) for measurements, trade-offs, and the scaling discussion. Run `npm run bench --prefix client` for deterministic CPU benchmarks. While the Vite development server is running, open `/?fixture=1000`, `/?fixture=10000`, or `/?fixture=50000` to use the separate synthetic-data harness and its React/long-task measurements. These fixtures do not alter the API and are excluded from production builds.
+
+### Optional navigation and outliers
+
+List view is the default at 100% zoom. Tree view supports cursor-centered Ctrl/Cmd + wheel zoom; physical trackpad pinch still needs manual verification. Focus subtree isolates the selected branch with a return action. Automatic badges flag duration, token, and cost values at least 3× the median of at least two other same-type siblings, excluding missing values and zero medians. Analysis filters these outliers; tooltips explain each comparison. Outliers are relative comparisons, not proof of failure.
