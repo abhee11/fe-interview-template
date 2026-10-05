@@ -1,73 +1,86 @@
-import { useEffect, useState } from "react";
-import RunDetailsPanel from "./components/RunDetailsPanel";
-import TraceTree from "./components/TraceTree";
-import { RunNode } from "./types";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GitBranch } from 'lucide-react';
+import RunDetailsPanel from './components/RunDetailsPanel';
+import TraceTree from './components/TraceTree';
+import { RunContent, RunNode } from './types';
+import { normalizeTrace, cost, duration, tokens } from './lib/trace';
 
-function App() {
-  const [runNodes, setRunNodes] = useState<RunNode[]>([]);
-  const [selectedNode, setSelectedNode] = useState<RunNode | null>(null);
-  const [loading, setLoading] = useState(true);
-
+export default function App({ fixture, fixtureContent }: { fixture?: RunNode[]; fixtureContent?: RunContent }) {
+  const [nodes, setNodes] = useState<RunNode[]>([]);
+  const [selected, setSelected] = useState<RunNode | null>(null);
+  const [raw, setRaw] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const [phase, setPhase] = useState('loading');
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
-    fetchRunNodes();
-  }, []);
-
-  const fetchRunNodes = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/traces`);
-      const data = await response.json();
-      setRunNodes(data);
-    } catch (error) {
-      console.error("Failed to fetch traces:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleNodeSelect = (node: RunNode) => {
-    setSelectedNode(node);
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-lg">Loading traces...</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto p-6">
-        <h1 className="text-3xl font-bold text-gray-900 mb-6">
-          LangSmith Trace Viewer
-        </h1>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Panel - Trace Tree */}
-          <div className="bg-white rounded-lg border p-6">
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <div className="text-gray-500">Loading trace nodes...</div>
-              </div>
-            ) : (
-              <TraceTree
-                nodes={runNodes}
-                onNodeSelect={handleNodeSelect}
-                selectedNodeId={selectedNode?.id}
-              />
-            )}
-          </div>
-
-          {/* Right Panel - Run Details */}
-          <div className="bg-white rounded-lg border p-6">
-            <RunDetailsPanel selectedNode={selectedNode} />
+    const controller = new AbortController();
+    if (fixture) { setNodes(fixture); setSelected(fixture.find(n => !n.parent_run_id) ?? null); setPhase('ready'); return; }
+    setPhase('loading');
+    fetch('/api/traces', { signal: controller.signal }).then(async response => {
+      if (!response.ok) throw new Error('Failed to load trace');
+      const data: RunNode[] = await response.json();
+      if (!Array.isArray(data)) throw new Error('Invalid trace');
+      if (!controller.signal.aborted) {
+        setNodes(data);
+        setSelected(previous => data.find(n => n.id === previous?.id) || null);
+        setPhase('ready');
+      }
+    }).catch(() => { if (!controller.signal.aborted) setPhase('error'); });
+    return () => controller.abort();
+  }, [refresh, fixture]);
+  const index = useMemo(() => normalizeTrace(nodes), [nodes]);
+  const root = index.entries.get(index.roots[0])?.run;
+  const active = selected ?? root ?? null;
+  const selectRun = useCallback((node: RunNode) => { setSelected(node); setShowDetails(true); }, []);
+  return <div className="app-shell">
+    <header className="app-header">
+      <a className="brand" href="/" aria-label="Trace viewer home">
+        <span className="brand-icon">
+          <img src="/trace-mark.svg" width={31} height={31} alt="" />
+        </span>Trace Explorer<span className="brand-divider" /> <span className="workspace-name">LangSmith traces</span>
+      </a>
+      <span className="environment">
+        <span /> Local workspace</span>
+    </header>
+    <main>
+      {root && <div className="trace-summary">
+        <div className="trace-title">
+          <span className="summary-icon">
+            <GitBranch size={19} />
+          </span>
+          <div>
+            <strong>{root.name}</strong>
+            <span>{root.start_time.slice(0, 10)} <i>·</i> {nodes.length} runs</span>
           </div>
         </div>
+        <div className="summary-stats">
+          <div>
+            <span>ROOT DURATION</span>
+            <strong>{duration(root)}</strong>
+          </div>
+          <div>
+            <span>ROOT TOKENS</span>
+            <strong>{tokens(root.total_tokens)}</strong>
+          </div>
+          <div>
+            <span>ROOT COST</span>
+            <strong>{cost(root.total_cost)}</strong>
+          </div>
+        </div>
+        <button className="button" aria-expanded={showDetails} aria-controls={showDetails ? "run-details" : undefined} onClick={() => setShowDetails(v => !v)}>{showDetails ? 'Hide details' : 'Show details'}</button>
+      </div>}
+      {phase === 'loading' ? <div className="workspace empty" role="status">
+        <span className="spinner" /> Loading execution trace…</div> : phase === 'error' ? <div className="workspace empty" role="alert">
+          <h2>Could not load the trace</h2>
+          <p>Check that the API server is running on port 3001.</p>
+          <button className="button" onClick={() => setRefresh(r => r + 1)}>Try again</button>
+        </div> : !nodes.length ? <div className="workspace empty">No runs found.</div> : <div className={`workspace ${showDetails ? '' : 'tree-only'}`}>
+          <TraceTree index={index} selectedNodeId={active?.id} onNodeSelect={selectRun} />{showDetails && <RunDetailsPanel key={active?.id} selectedNode={active} index={index} raw={raw} onRawChange={setRaw} fixtureContent={fixtureContent} />}</div>}
+      <div className="page-footer">
+        <span>
+          <span className="live-dot" /> {phase === 'ready' ? 'Local trace data loaded' : phase === 'error' ? 'API unavailable' : 'Connecting to local API'}</span>
+        <span>Built for the details.</span>
       </div>
-    </div>
-  );
+    </main>
+  </div>;
 }
-
-export default App;

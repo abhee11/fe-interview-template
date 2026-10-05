@@ -16,8 +16,8 @@ export interface RunNode {
 
 export interface RunContent {
   id: string;
-  inputs: Record<string, any>;
-  outputs: Record<string, any>;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
 }
 
 export type TraceTree = RunNode[];

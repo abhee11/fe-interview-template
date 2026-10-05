@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "bench": "node --import ../server/node_modules/tsx/dist/loader.mjs tests/performance.ts",
+    "test": "node --import ../server/node_modules/tsx/dist/loader.mjs --test tests/*.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-popover": "^1.0.7",
@@ -36,4 +38,4 @@
     "typescript": "^5.2.2",
     "vite": "^4.5.0"
   }
-} 
+}
